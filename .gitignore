@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.venv-win/
+
+# macOS
+.DS_Store
+
+# Compiled Swift binaries — platform-specific build output, sources (.swift) are tracked.
+# A Windows port will get its own build output dir, also ignored here.
+engines/ocr
+engines/screenreduce
+helpers/assemble
+helpers/datedetect
+helpers/meta
+helpers/summarize
+helpers/webcapture
+
+# Case / matter data — real client documents (PII, financial, legal). Never goes in git.
+matters/
+work/
+captures/
+
+# Machine-specific MCP registration (hardcoded absolute local paths)
+.mcp.json

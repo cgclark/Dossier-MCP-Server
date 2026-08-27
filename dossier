@@ -1,0 +1,36 @@
+#!/bin/bash
+# dossier — unified CLI for the Dossier pipeline, for use from Claude Code (full
+# filesystem access; no Desktop MCP / FDA needed). Thin dispatcher over the modules.
+#
+#   dossier ingest "<matter_dir>" --work "<work_dir>"   # OCR+extract → manifest
+#   dossier ingest_status "<work_dir>"                   # background-job progress / final summary
+#   dossier chronology "<work_dir>"                       # merged UTC ledger
+#   dossier organize  "<work_dir>" [--apply]              # dedup/misfile/naming/symlinks
+#   dossier cluster   "<work_dir>" [--threshold 0.8] [--apply]  # group counterpart-signed copies
+#   dossier query "<work_dir>" find "<text>"             # find / get <id> / verify <val> <id>
+#   dossier exhibit_list "<work_dir>" [--order chrono|type]
+#   dossier digest "<work_dir>"
+#   dossier savings "<work_dir>"
+#   dossier summarize "<work_dir>" [<id>|missing|all]    # on-device summary+key_points (Apple FM)
+#   dossier assemble "<spec.json>" "<out.pdf>"
+set -euo pipefail
+SRV="$HOME/dossier/server"
+HLP="$HOME/dossier/helpers"
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  ingest)        exec python3 "$SRV/ingest.py" "$@" ;;
+  chronology)    exec python3 "$SRV/chronology.py" "$@" ;;
+  organize)      exec python3 "$SRV/organize.py" "$@" ;;
+  cluster)       exec python3 "$SRV/cluster.py" "$@" ;;
+  ingest_status) w="$1"; shift; exec python3 "$SRV/ingest.py" --work "$w" --status "$@" ;;
+  savings)       exec python3 "$SRV/savings.py" "$@" ;;
+  summarize)     exec python3 "$SRV/summarize.py" "$@" ;;
+  query)         exec python3 "$SRV/query.py" "$@" ;;
+  exhibit_list)  w="$1"; shift; exec python3 "$SRV/deliverables.py" "$w" exhibit_list "$@" ;;
+  digest)        w="$1"; shift; exec python3 "$SRV/deliverables.py" "$w" digest "$@" ;;
+  assemble)      exec "$HLP/assemble" "$@" ;;
+  ""|-h|--help)
+    grep -E '^#   dossier' "$0" | sed 's/^#   //'
+    ;;
+  *) echo "unknown subcommand: $cmd (try --help)" >&2; exit 2 ;;
+esac
