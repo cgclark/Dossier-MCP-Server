@@ -1,60 +1,70 @@
-# Dossier — how to use it from ANY project
+# Dossier
 
-On-device document intake / index / retrieval. It lives OUTSIDE every Claude project
-directory. **Always use absolute paths — nothing here is relative to your project.**
+On-device document intake, indexing, and retrieval for case files — OCR, chronology,
+dedup, and token-cheap search, exposed to Claude as an MCP server. Bulk content (raw
+images, full text) never leaves disk; only compact, distilled results cross into the
+conversation. See [SPEC.md](SPEC.md) for the full design and [DESIGN-NOTES.md](DESIGN-NOTES.md)
+for running notes (e.g. the Windows port plan).
+
+## Status
+
+| Platform | Ingest / OCR / summarize | Query / chronology / organize |
+|---|---|---|
+| **macOS** | ✅ native (Apple Vision + Foundation Models) | ✅ |
+| **Windows** | ❌ not yet ported (needs a Windows OCR/date-detect swap-in — see DESIGN-NOTES.md) | ✅ |
+
+The Python layer (`server/`, `parsers/`) is portable and identical on both platforms.
+Only `engines/` and `helpers/` are native, macOS-only Swift binaries today.
+
+## Layout
+
+```
+server/     MCP server (server.py) + the pipeline modules it shells out to
+parsers/    Format-specific extractors (.eml, chat exports)
+engines/    OCR / vision (Swift, macOS-only compiled binaries — sources tracked, binaries gitignored)
+helpers/    Date detection, meta extraction, assembly, web capture (same deal as engines/)
+skills/     Claude skill definition for driving Dossier from a conversation
+schema.sql  Manifest DB schema
+```
+
+`matters/`, `work/`, and `captures/` are gitignored — they hold real case documents
+(PII, financial, legal) and per-machine ingest state, and should never enter git history.
+
+## Setup
+
+### macOS
+```bash
+./build.sh                       # compiles engines/*.swift + helpers/*.swift (needs Xcode CLT)
+python3 -m venv .venv
+.venv/bin/pip install mcp
+```
+Register in Claude Desktop via `claude_desktop_config.snippet.json` (merge the `dossier`
+entry into `claude_desktop_config.json`, then restart Desktop).
+
+### Windows
+```powershell
+python -m venv .venv-win
+.venv-win\Scripts\pip install --prefer-binary "mcp<2"
+```
+`mcp<2` is required — `server.py` uses the v1 `FastMCP` API, which mcp 2.x renamed.
+Register as a project or user-scoped MCP server pointing at `.venv-win\Scripts\python.exe server\server.py`.
+Ingest/summarize/assemble tool calls will fail here until a Windows engine port exists;
+query-side tools work against any matter already ingested on macOS.
 
 ## CLI
-- On PATH as `dossier` (symlink `/opt/homebrew/bin/dossier` → `/Users/cgclark/dossier/dossier`).
-- If you get `dossier: command not found`, your shell's PATH lacks `/opt/homebrew/bin` —
-  call the full path instead: `/Users/cgclark/dossier/dossier`
-- `dossier --help` lists every subcommand.
 
-## Key locations
-| What | Absolute path |
-|------|---------------|
-| Toolchain root | `/Users/cgclark/dossier` |
-| Results / manifests (the "work dir") | `/Users/cgclark/dossier/work/<matter>` |
-| Matter originals | `/Users/cgclark/Documents/Claude/<matter>/sources/` |
-| Drop / staging folder | `/Users/cgclark/Documents/Claude/ingest` |
-| Trash (recoverable) | `/Users/cgclark/Documents/Claude/_trash` |
+The `dossier` script is a thin bash dispatcher over the same modules the MCP server calls
+— useful from a shell with full filesystem access (no MCP round-trip needed):
 
-## Current matters (list live with `ls /Users/cgclark/dossier/work`)
-- **West_826** → work `/Users/cgclark/dossier/work/West_826` · originals `/Users/cgclark/Documents/Claude/West_826/sources`
-- **singapore** → work `/Users/cgclark/dossier/work/singapore` · originals `/Users/cgclark/Documents/Claude/Singapore_divorce/sources`
-
-(Note the exact name/casing: it is `West_826`, not `west826`.)
-
-## Common commands (absolute paths)
-Ingest (idempotent — re-run to add new files):
-```
-dossier ingest "/Users/cgclark/Documents/Claude/West_826" --work "/Users/cgclark/dossier/work/West_826"
-```
-Query (never dumps whole docs):
-```
-dossier query "/Users/cgclark/dossier/work/West_826" find "rental cap"        # hits + one-line gists
-dossier query "/Users/cgclark/dossier/work/West_826" get <id> <start> <end>   # slice by LINE number
-dossier query "/Users/cgclark/dossier/work/West_826" get <id> 6 9 --pages     # slice by PAGE number
-# NB `get` defaults to lines 0..40 (≈ page 1) when no range is given — that is NOT a bug, it means
-# no range was passed. Use `--pages` (CLI) or the MCP `pages="6-9"` arg to read by page and avoid
-# the line/page mix-up. MCP: get(work, artifact_id, pages="6-9").
-dossier query "/Users/cgclark/dossier/work/West_826" verify "<value>" <id>    # confirm a value is present
-```
-On-device summaries (Apple Foundation Models; REDUCTION ONLY — verify before relying):
-```
-dossier summarize "/Users/cgclark/dossier/work/West_826" [<id>|missing|all]
-```
-Chronology / status:
-```
-dossier chronology   "/Users/cgclark/dossier/work/<matter>"
-dossier ingest_status "/Users/cgclark/dossier/work/<matter>"
+```bash
+dossier ingest "<matter_dir>" --work "<work_dir>"        # OCR + extract (idempotent, resumable)
+dossier query "<work_dir>" find "rental cap"             # hits + one-line gists
+dossier query "<work_dir>" get <id> --pages "6-9"         # read by page, never dumps the whole doc
+dossier query "<work_dir>" verify "<value>" <id>          # confirm a value is document-backed
+dossier chronology "<work_dir>"
+dossier summarize "<work_dir>" [<id>|missing|all]         # on-device, reduction-only — verify before relying
 ```
 
-## Rules
-- **Do NOT read source PDFs/images directly** — let the tools reduce them (keeps context small).
-- Supported types: PDF, PNG/JPG/JPEG/TIFF/HEIC, `.eml`, `.xlsx`, `.docx/.doc/.rtf`, `.pptx`,
-  `.txt` (incl. WhatsApp/iMessage exports), and public URLs (drop a `urls.txt` in the folder).
-- **Drop-folder ingests take TOP-LEVEL files only — never recurse into subdirectories.**
-  (A real matter's own `sources/legal`, `sources/property` etc. DO ingest recursively.)
-- Extracted dates / SHAs / form-fields are document-backed; on-device summaries are reduction-only.
-- If your project is sandboxed, `/Users/cgclark/dossier` and `/Users/cgclark/Documents/Claude`
-  must be readable/writable, or every call fails regardless of correct paths.
+**Rules:** never read source PDFs/images directly — let the tools reduce them. Drop-folder
+ingests take top-level files only (no recursion); a matter's own `sources/` subfolders do
+recurse.
