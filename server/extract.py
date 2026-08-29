@@ -10,6 +10,10 @@ Importable by ingest; also runnable standalone for testing:  extract.py <textfil
 """
 import re, sys, json
 
+if sys.platform.startswith("win"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 # numeric d/m/y or m/d/y, and common text forms
 NUM = r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b"
 TEXT_DATE = r"\b(?:\d{1,2}\s+[A-Z][a-z]+\s+\d{4}|[A-Z][a-z]+\s+\d{1,2},?\s+\d{4})\b"
@@ -61,9 +65,16 @@ def formfield_dates(text, locale=None):
     """Find 'Label ... : <date>' pairs → typed events."""
     out = []
     for pat, kind in LABELS:
-        for m in re.finditer(pat + r"[^\n:]{0,30}:?\s*(" + NUM + r"|" + TEXT_DATE + r")",
+        # pat must be wrapped in a non-capturing group: several LABELS entries contain a
+        # top-level "|" of their own (e.g. "date\s+signed|signed\s+on|executed..."), which —
+        # unwrapped — silently splits the WHOLE concatenated regex into separate top-level
+        # alternatives, so some branches never include the trailing date group at all and
+        # group(1) comes back None even though the match "succeeded".
+        for m in re.finditer(r"(?:" + pat + r")[^\n:]{0,30}:?\s*(" + NUM + r"|" + TEXT_DATE + r")",
                              text, re.IGNORECASE):
             raw = m.group(1)
+            if raw is None:
+                continue
             ev = {"kind": kind, "value_raw": raw, "source": f"formfield@{m.start()}",
                   "provenance": "document-backed", "granularity": "day"}
             nm = re.match(NUM, raw)

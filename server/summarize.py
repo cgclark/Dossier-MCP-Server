@@ -10,11 +10,16 @@ keeps full text off Claude. REDUCTION ONLY: never authoritative; deterministic b
 
 `missing` (default) summarises artifacts that have OCR text but no summary yet.
 """
-import argparse, json, sqlite3, subprocess
+import argparse, json, sqlite3, subprocess, sys
 from pathlib import Path
 
+if sys.platform.startswith("win"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 BASE = Path(__file__).resolve().parent.parent
-SUMMARIZE = BASE / "helpers" / "summarize"
+SUMMARIZE = ([sys.executable, str(BASE / "helpers" / "summarize_win.py")]
+             if sys.platform.startswith("win") else [str(BASE / "helpers" / "summarize")])
 
 
 def ensure_columns(db):
@@ -36,8 +41,8 @@ def run_summary(ocr_path, points=5, max_chars=50000):
         return None
     if n > max_chars:
         return {"available": True, "skipped": "too-large", "chars": n}
-    r = subprocess.run([str(SUMMARIZE), str(ocr_path), "--points", str(points)],
-                       capture_output=True, text=True)
+    r = subprocess.run(SUMMARIZE + [str(ocr_path), "--points", str(points)],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0 or not r.stdout.strip():
         return None
     try:

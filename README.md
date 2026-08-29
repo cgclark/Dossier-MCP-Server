@@ -37,13 +37,22 @@ Non-destructive; the manifest *is* the retrieval index (find without reading).
 
 ## Status
 
-| Platform | Ingest / OCR / summarize | Query / chronology / organize |
-|---|---|---|
-| **macOS** | ✅ native (Apple Vision + Foundation Models) | ✅ |
-| **Windows** | ❌ not yet ported (needs a Windows OCR/date-detect swap-in — see DESIGN-NOTES.md) | ✅ |
+| Platform | Ingest / OCR | Summarize | Assemble / webcapture | Query / chronology / organize |
+|---|---|---|---|---|
+| **macOS** | ✅ Apple Vision (on-device) | ✅ Apple Foundation Models (on-device) | ✅ | ✅ |
+| **Windows** | ✅ Windows AI OCR (on-device, NPU) | ✅ **Claude Haiku over the network** | ✅ | ✅ |
 
 The Python layer (`server/`, `parsers/`) is portable and identical on both platforms.
-Only `engines/` and `helpers/` are native, macOS-only Swift binaries today.
+`engines/`/`helpers/` are native on macOS (compiled Swift binaries); on Windows the
+`*_win.py` scripts next to each one are pure-Python equivalents — see Setup below.
+
+**Privacy note:** every step is fully on-device on both platforms, with exactly one
+exception — **Windows `summarize` sends document text to Anthropic's API** (Claude
+Haiku) for its optional on-device-style gist, since Apple's Foundation Models has no
+Windows equivalent. `ingest`/OCR/dates/search/`assemble`/`webcapture` stay 100% local
+on Windows too. `summarize` is opt-in (`--summarize` on ingest, or an explicit
+`summarize` tool call) and requires `ANTHROPIC_API_KEY` — without it, it degrades
+gracefully to `{"available": false}` rather than failing.
 
 ## Layout
 
@@ -93,12 +102,31 @@ the compiled binaries.
 ### Windows
 ```powershell
 python -m venv .venv-win
-.venv-win\Scripts\pip install --prefer-binary "mcp<2"
+.venv-win\Scripts\pip install --prefer-binary "mcp<2" PyMuPDF Pillow pillow-heif dateparser `
+  python-docx striprtf pypdf reportlab playwright anthropic `
+  winsdk
 ```
 `mcp<2` is required — `server.py` uses the v1 `FastMCP` API, which mcp 2.x renamed.
 Register as a project or user-scoped MCP server pointing at `.venv-win\Scripts\python.exe server\server.py`.
-Ingest/summarize/assemble tool calls will fail here until a Windows engine port exists;
-query-side tools work against any matter already ingested on macOS.
+
+Windows engines, and what they need:
+- **OCR** (`engines/ocr_win.py`) — Windows AI OCR via `winsdk`. On-device, NPU-accelerated
+  on Copilot+ PCs. Needs an OCR language installed (Settings → Time & Language → Language
+  & region → add a language with the "Optical character recognition" component; usually
+  already present).
+- **meta / datedetect** — PyMuPDF + Pillow / `dateparser`. No setup needed.
+- **assemble** — `pypdf` + `reportlab`. No setup needed.
+- **webcapture** — Playwright driving your already-installed Edge (falling back to Chrome).
+  No browser download needed.
+- **summarize** — calls Claude Haiku over the network (see the privacy note above). Set
+  `ANTHROPIC_API_KEY` in the environment to enable it; without it, `summarize` degrades
+  to `{"available": false}` rather than failing.
+
+`opencv-python`/`pyclipper`/`Shapely` (RapidOCR's dependencies) have **no ARM64 Windows
+wheels** and need a full C++ build toolchain to compile from source — that's why OCR uses
+Windows AI OCR instead. `.doc` (legacy binary format, not `.docx`) has no lightweight
+Windows reader; ingest notes this per-file rather than failing silently — convert to
+`.docx` first if you need one indexed.
 
 ## CLI
 

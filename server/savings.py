@@ -6,8 +6,12 @@ plus the on-device cost as a SEPARATE currency (VLM tokens ≠ Claude tokens).
 
     savings.py <workdir>
 """
-import argparse, sqlite3
+import argparse, sqlite3, sys
 from pathlib import Path
+
+if sys.platform.startswith("win"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 IMG_TOK_PER_PAGE = 1600   # Apple resizes large images to ~this
 CHARS_PER_TOK = 4

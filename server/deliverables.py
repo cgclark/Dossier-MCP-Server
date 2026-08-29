@@ -7,8 +7,12 @@
     deliverables.py <workdir> exhibit_list [--order chrono|type]
     deliverables.py <workdir> digest
 """
-import argparse, sqlite3, re
+import argparse, sqlite3, re, sys
 from pathlib import Path
+
+if sys.platform.startswith("win"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 DATE_SRCS = ["formfield-R1@%", "formfield@%", "content@%", "pdf./Info", "fs.birthtime"]
 

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "grep -q \"git commit\" && cd \"/c/Users/cgclark/Documents/Claude/dossier\" && for f in dossier build.sh; do m=$(git ls-files -s -- \"$f\" 2>/dev/null | awk \"{print \\$1}\"); if [ -n \"$m\" ] && [ \"$m\" != \"100755\" ]; then echo \"{\\\"systemMessage\\\": \\\"WARNING: $f lost its executable bit (mode $m) after a commit -- Windows checkouts do not track +x. Fix: git update-index --chmod=+x $f && git commit --amend --no-edit\\\"}\"; fi; done || true"
+          }
+        ]
+      }
+    ]
+  }
+}

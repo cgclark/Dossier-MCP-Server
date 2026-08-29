@@ -9,9 +9,13 @@ Every copy is preserved; the group records the logical agreement + the executed 
 
     cluster.py <workdir> [--threshold 0.8] [--apply]
 """
-import argparse, sqlite3, re, hashlib
+import argparse, sqlite3, re, hashlib, sys
 from collections import defaultdict
 from pathlib import Path
+
+if sys.platform.startswith("win"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 
 def stable(s):

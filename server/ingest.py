@@ -10,6 +10,9 @@ Writes ONLY to --work. Idempotent.
 """
 import argparse, json, os, re, sqlite3, subprocess, sys, time, zipfile, hashlib
 from pathlib import Path
+if sys.platform.startswith("win"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).parent))
 import extract
 import summarize as summ   # aliased: ingest.py already defines a summarize() (DB-summary) fn
@@ -44,7 +47,7 @@ def capture_urls(sources, work):
         if not u or u.startswith("#"):
             continue
         base = webdir / f"page{i:03d}"
-        r = run([str(WEBCAP), u, str(base)])
+        r = run(WEBCAP + [u, str(base)])
         pdf = base.with_suffix(".pdf")
         if pdf.exists():
             try:
@@ -69,18 +72,32 @@ def r1_pages(body):
 
 # Location-independent: resolve everything relative to the dossier root (server/..).
 BASE = Path(__file__).resolve().parent.parent
-META = BASE / "helpers/meta"
-DATEDETECT = BASE / "helpers/datedetect"
+_WIN = sys.platform.startswith("win")
+
+
+def _pick(mac_binary, win_script):
+    """Windows has no compiled equivalent of the macOS Swift binaries — resolve to
+    [python, <..._win.py>] there instead of a direct binary exec path."""
+    return [sys.executable, str(BASE / win_script)] if _WIN else [str(BASE / mac_binary)]
+
+
+META = _pick("helpers/meta", "helpers/meta_win.py")
+DATEDETECT = _pick("helpers/datedetect", "helpers/datedetect_win.py")
+OCRBIN = _pick("engines/ocr", "engines/ocr_win.py")
+WEBCAP = _pick("helpers/webcapture", "helpers/webcapture_win.py")
 EML = BASE / "parsers/eml.py"
 CHAT = BASE / "parsers/chat.py"
-OCRBIN = BASE / "engines/ocr"
-WEBCAP = BASE / "helpers/webcapture"
 SCHEMA = BASE / "schema.sql"
 IMG = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".heic", ".heif"}
 
 
 def run(cmd, **kw):
-    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+    # encoding="utf-8" explicitly: Windows' default text-mode decoding falls back to the
+    # console codepage (cp1252), which breaks on any non-ASCII byte our own Windows helper
+    # scripts emit (they write UTF-8). errors="replace" so a genuinely malformed byte never
+    # crashes ingest — it degrades to a replacement char instead.
+    return subprocess.run(cmd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", **kw)
 
 
 def log_metric(db, file, rung, ms, model=None, prompt_tok=None, gen_tok=None):
@@ -220,6 +237,28 @@ def _eml_text(f):
     return text or None
 
 
+def _doc_text_win(f):
+    """Windows substitute for textutil: .docx via python-docx, .rtf via striprtf.
+    .doc (legacy binary format) has no lightweight pure-Python reader — this is a
+    documented gap, not a silent failure: the note itself gets indexed so it's
+    visible in search/chronology rather than the artifact just being empty."""
+    ext = f.suffix.lower()
+    try:
+        if ext == ".docx":
+            import docx
+            d = docx.Document(str(f))
+            return "\n".join(p.text for p in d.paragraphs)
+        if ext == ".rtf":
+            from striprtf.striprtf import rtf_to_text
+            return rtf_to_text(f.read_text(errors="ignore"))
+    except Exception as e:
+        print(f"  ! {f.name[:48]}: Windows text extraction failed ({e})", file=sys.stderr)
+        return None
+    # .doc: legacy binary format, no pure-Python reader available.
+    return ("[Dossier: legacy .doc not supported on Windows — convert to .docx and "
+            "re-run ingest to index this file's content]")
+
+
 def own_ocr(f, work):
     """Always OCR with OUR engine (don't trust inherited ocr/). --page-sep for sub-doc awareness."""
     ext = f.suffix.lower()
@@ -228,19 +267,23 @@ def own_ocr(f, work):
     if out.exists():
         return out
     if ext == ".pdf" or ext in IMG:
-        run([str(OCRBIN), str(f), "-o", str(out), "--page-sep", "--quiet"])
+        run(OCRBIN + [str(f), "-o", str(out), "--page-sep", "--quiet"])
     elif ext in (".docx", ".doc", ".rtf"):
-        # textutil (macOS) converts legacy .doc/.rtf and the OOXML word format (NOT pptx/xlsx)
-        out.write_text(run(["textutil", "-convert", "txt", "-stdout", str(f)]).stdout)
+        if _WIN:
+            out.write_text(_doc_text_win(f) or "", encoding="utf-8")
+        else:
+            # textutil (macOS) converts legacy .doc/.rtf and the OOXML word format (NOT pptx/xlsx)
+            out.write_text(run(["textutil", "-convert", "txt", "-stdout", str(f)]).stdout,
+                           encoding="utf-8")
     elif ext == ".txt":
         # plain text (incl. WhatsApp/iMessage chat exports) — index verbatim
-        try: out.write_text(f.read_text(errors="ignore"))
+        try: out.write_text(f.read_text(errors="ignore"), encoding="utf-8")
         except Exception: return None
     else:
         txt = {".xlsx": _xlsx_text, ".pptx": _pptx_text, ".eml": _eml_text}.get(ext, lambda _: None)(f)
         if not txt:
             return None
-        out.write_text(txt)
+        out.write_text(txt, encoding="utf-8")
     return out if out.exists() else None
 
 
@@ -262,7 +305,7 @@ def write_progress(work, **fields):
             cur = {}
     cur.update(fields)
     try:
-        p.write_text(json.dumps(cur))
+        p.write_text(json.dumps(cur), encoding="utf-8")
     except Exception:
         pass
     return cur
@@ -418,7 +461,7 @@ def main():
                 db.execute("INSERT INTO artifact(sha256,original_path,kind,duplicate_of) VALUES(?,?,?,?)",
                            (sha, str(f), f.suffix.lower().lstrip("."), seen[sha])); continue
             m = {}
-            t0 = time.perf_counter(); r = run([str(META), str(f)]); log_metric(db, f.name, "meta", _ms(t0))
+            t0 = time.perf_counter(); r = run(META + [str(f)]); log_metric(db, f.name, "meta", _ms(t0))
             if r.returncode == 0 and r.stdout.strip():
                 m = json.loads(r.stdout)
             kind = m.get("kind", f.suffix.lower().lstrip("."))
@@ -497,7 +540,7 @@ def main():
                 # authoritative, zone-honest span events; NSDataDetector would misread the
                 # per-message locale as US MDY and flood the table one date per message)
                 if not is_chat:
-                    t0 = time.perf_counter(); r = run([str(DATEDETECT), str(tp)]); log_metric(db, f.name, "datedetect", _ms(t0))
+                    t0 = time.perf_counter(); r = run(DATEDETECT + [str(tp)]); log_metric(db, f.name, "datedetect", _ms(t0))
                     if r.returncode == 0 and r.stdout.strip():
                         for ev in json.loads(r.stdout):
                             add_event(aid, ev["kind"], ev["value_raw"], ev.get("value_utc"),
@@ -536,7 +579,7 @@ def main():
                     combined = ""
                     t0 = time.perf_counter()
                     for n in sorted(set(targets))[:6]:          # cap pages → bounded cost
-                        rr = run([str(OCRBIN), str(f), "--force-vision", "--pages", str(n), "--quiet"])
+                        rr = run(OCRBIN + [str(f), "--force-vision", "--pages", str(n), "--quiet"])
                         combined += "\n" + rr.stdout
                     log_metric(db, f.name, "R1", _ms(t0))
                     loc2 = extract.infer_locale(combined) or locale
@@ -565,7 +608,7 @@ def main():
     summary = summarize(db)
     print(summary)
     try:
-        (_state_dir(work) / "summary.txt").write_text(summary)
+        (_state_dir(work) / "summary.txt").write_text(summary, encoding="utf-8")
     except Exception:
         pass
     write_progress(work, done=len(files), total=len(files), state="done")

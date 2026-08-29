@@ -20,13 +20,16 @@ from mcp.server.fastmcp import FastMCP
 HERE = Path(__file__).parent
 PY = sys.executable
 HELP = HERE.parent / "helpers"
+ASSEMBLE = [PY, str(HELP / "assemble_win.py")] if sys.platform.startswith("win") \
+    else [str(HELP / "assemble")]
 mcp = FastMCP("dossier")
 
 
 def sh(cmd, limit=20000, timeout=45):
     """Run a child process with a HARD timeout — a wedged child is killed, never awaited forever."""
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         return (f"(aborted: this call exceeded {timeout}s and its process was killed — the server "
                 f"stays responsive. Narrow the range/query, or run the same command via the `dossier` CLI.)")
@@ -162,7 +165,7 @@ async def digest(work: str) -> str:
 @mcp.tool()
 async def assemble(spec_json: str, out_pdf: str) -> str:
     """Assemble an exhibit-bundle PDF from the ORIGINALS per a JSON spec (cover schedule + pages)."""
-    return await _run([str(HELP / "assemble"), spec_json, out_pdf], timeout=120)
+    return await _run(ASSEMBLE + [spec_json, out_pdf], timeout=120)
 
 
 @mcp.tool()

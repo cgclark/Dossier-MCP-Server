@@ -8,8 +8,12 @@
 Finding is free (manifest lookup); opening costs tokens, on demand only.
     query.py <workdir> <cmd> ...
 """
-import argparse, sqlite3, json, re
+import argparse, sqlite3, json, re, sys
 from pathlib import Path
+
+if sys.platform.startswith("win"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 
 def has_col(db, table, col):

@@ -7,9 +7,13 @@ Output is compact (the projection Claude reads), never document content.
 
     chronology.py <workdir> [--window-min 10] [--out chronology.json]
 """
-import argparse, json, sqlite3
+import argparse, json, sqlite3, sys
 from pathlib import Path
 from datetime import datetime, timedelta
+
+if sys.platform.startswith("win"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 
 def sortkey(ev):
