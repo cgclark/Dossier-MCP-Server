@@ -34,6 +34,7 @@ schema.sql  Manifest DB schema
 
 ### macOS
 ```bash
+./build.sh                       # compiles engines/*.swift + helpers/*.swift (needs Xcode CLT)
 python3 -m venv .venv
 .venv/bin/pip install mcp
 ```
