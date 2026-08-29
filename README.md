@@ -62,13 +62,33 @@ schema.sql  Manifest DB schema
 ## Setup
 
 ### macOS
+
+**Prerequisites:** Xcode Command Line Tools (`xcode-select --install`, for `swiftc`) and
+Python 3.11+. On-device summaries (`summarize`) additionally need **macOS 26+ on Apple
+Silicon with Apple Intelligence enabled** — they use Foundation Models. OCR (Apple Vision)
+and everything else work on any current macOS.
+
 ```bash
-./build.sh                       # compiles engines/*.swift + helpers/*.swift (needs Xcode CLT)
+# 1. Build the native Swift engines + helpers (re-run after editing any .swift)
+./build.sh                       # swiftc -O over engines/*.swift + helpers/*.swift → gitignored binaries
+
+# 2. Python env for the MCP server
 python3 -m venv .venv
 .venv/bin/pip install mcp
+
+# 3. (optional) put the CLI on PATH so `dossier …` works from anywhere
+ln -s "$PWD/dossier" /opt/homebrew/bin/dossier
 ```
-Register in Claude Desktop via `claude_desktop_config.snippet.json` (merge the `dossier`
-entry into `claude_desktop_config.json`, then restart Desktop).
+
+Then either:
+- **MCP** — merge the `dossier` entry from `claude_desktop_config.snippet.json` into
+  `claude_desktop_config.json` (it points Desktop at `.venv/bin/python server/server.py`),
+  then restart Claude Desktop; or
+- **CLI / Claude Code** — skip the MCP and drive it straight from a shell with the `dossier`
+  commands below (no MCP round-trip, full filesystem access).
+
+Quick check the build worked: `ls helpers/meta helpers/summarize engines/ocr` should list
+the compiled binaries.
 
 ### Windows
 ```powershell
