@@ -13,6 +13,15 @@ provenance-tagged **chronology**, an **organized + retrievable** file store, and
 legal-ready **deliverables** (exhibit list, digest, assembled exhibits) — while
 spending as few Claude context tokens as possible.
 
+**Background.** Hand a document with embedded images (a scanned PDF, a photographed
+letter) to Claude directly and each image gets read in as real tokens (~1,600/page
+after resize) — and because a conversation is stateful, that cost doesn't go away once
+the image has been looked at. It's carried in every subsequent turn for the rest of the
+session, quietly subsuming context that has nothing to do with it. Across a real case
+corpus this adds up fast: a 250-page pile can cost ~175k tokens read this way, against
+~10k for what Dossier actually needs to answer a question — and a large enough corpus
+exceeds the context window outright before any real work gets done in it.
+
 **Target 1 (primary): minimize Claude main-context tokens.** Bulk content (images,
 full text) stays on disk; only compact, distilled results cross the MCP boundary into
 the conversation. The MCP tool-call boundary plays the role subagents play in Claude
