@@ -145,7 +145,9 @@ async def organize(work: str, apply: bool = False) -> str:
 
 @mcp.tool()
 async def summarize(work: str, target: str = "missing") -> str:
-    """On-device summary + key_points per artifact (Apple Foundation Models). target: <id>|missing|all.
+    """Summary + key_points per artifact. target: <id>|missing|all.
+    macOS: on-device (Apple Foundation Models), fully local. Windows: Claude Haiku over the
+    Anthropic API (requires ANTHROPIC_API_KEY) — the one step Windows isn't fully on-device.
     REDUCTION ONLY — not authoritative; verify facts against sources. Slow (~5-6s/doc)."""
     return await _run([PY, str(HERE / "summarize.py"), work, target], timeout=600)
 
