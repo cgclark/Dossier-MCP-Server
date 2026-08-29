@@ -6,6 +6,26 @@ images, full text) never leaves disk; only compact, distilled results cross into
 conversation. See [SPEC.md](SPEC.md) for the full design and [DESIGN-NOTES.md](DESIGN-NOTES.md)
 for running notes (e.g. the Windows port plan).
 
+## Purpose
+
+A local MCP server that turns a folder of source documents/messages into a
+provenance-tagged **chronology**, an **organized + retrievable** file store, and
+legal-ready **deliverables** (exhibit list, digest, assembled exhibits) — while
+spending as few Claude context tokens as possible.
+
+**Target 1 (primary): minimize Claude main-context tokens.** Bulk content (images,
+full text) stays on disk; only compact, distilled results cross the MCP boundary into
+the conversation. The MCP tool-call boundary plays the role subagents play in Claude
+Code — the isolation layer Desktop otherwise lacks.
+
+**Target 2 (secondary): organize the master/original files for easy later retrieval.**
+Non-destructive; the manifest *is* the retrieval index (find without reading).
+
+**Non-goals (v1):**
+- Not legal advice — outputs are drafting aids for a human (lawyer) to review.
+- No remote/hosted deployment — kills the on-device/private property; local-only.
+- No automatic contact with third parties — the server *suggests*, the user acts.
+
 ## Status
 
 | Platform | Ingest / OCR / summarize | Query / chronology / organize |
