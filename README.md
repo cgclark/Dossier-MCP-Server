@@ -42,6 +42,13 @@ Non-destructive; the manifest *is* the retrieval index (find without reading).
 | **macOS** | ✅ Apple Vision (on-device) | ✅ Apple Foundation Models (on-device) | ✅ | ✅ |
 | **Windows** | ✅ Windows AI OCR (on-device, NPU) | ✅ **Claude Haiku over the network** | ✅ | ✅ |
 
+> **Windows arch note:** built and verified on **Windows 11 ARM64** (Copilot+ PC) only.
+> The code has no hardcoded architecture and every dependency ships x64 wheels too, so
+> it should work unmodified on x64 Windows — but that has **not been tested**. `.venv-win`
+> itself isn't portable between architectures either way; each machine needs its own
+> `python -m venv` + pip install, which will just resolve the matching wheels for
+> whatever CPU it's running on.
+
 The Python layer (`server/`, `parsers/`) is portable and identical on both platforms.
 `engines/`/`helpers/` are native on macOS (compiled Swift binaries); on Windows the
 `*_win.py` scripts next to each one are pure-Python equivalents — see Setup below.
