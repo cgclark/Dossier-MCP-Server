@@ -1,0 +1,9 @@
+{
+  "_comment": "Merge the 'dossier' entry under mcpServers in claude_desktop_config.json, then restart Desktop. Toolchain lives in ~/dossier (outside Documents) so NO Full Disk Access / Documents grant is needed — provided the documents you ingest are also outside protected folders (Documents/Desktop/Downloads/iCloud).",
+  "mcpServers": {
+    "dossier": {
+      "command": "/Users/cgclark/dossier/.venv/bin/python",
+      "args": ["/Users/cgclark/dossier/server/server.py"]
+    }
+  }
+}
