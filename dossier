@@ -16,18 +16,23 @@
 set -euo pipefail
 SRV="$HOME/dossier/server"
 HLP="$HOME/dossier/helpers"
+# Pin the interpreter to the project venv (py3.11 + mcp). A bare `python3` picks up whatever
+# is first on PATH — from an Xcode-toolchain shell that is Xcode's framework Python 3.9, which
+# is the wrong deps and a known source of odd subprocess behaviour. Override with DOSSIER_PY.
+PY="${DOSSIER_PY:-$HOME/dossier/.venv/bin/python}"
+[ -x "$PY" ] || PY="$(command -v python3)"
 cmd="${1:-}"; shift || true
 case "$cmd" in
-  ingest)        exec python3 "$SRV/ingest.py" "$@" ;;
-  chronology)    exec python3 "$SRV/chronology.py" "$@" ;;
-  organize)      exec python3 "$SRV/organize.py" "$@" ;;
-  cluster)       exec python3 "$SRV/cluster.py" "$@" ;;
-  ingest_status) w="$1"; shift; exec python3 "$SRV/ingest.py" --work "$w" --status "$@" ;;
-  savings)       exec python3 "$SRV/savings.py" "$@" ;;
-  summarize)     exec python3 "$SRV/summarize.py" "$@" ;;
-  query)         exec python3 "$SRV/query.py" "$@" ;;
-  exhibit_list)  w="$1"; shift; exec python3 "$SRV/deliverables.py" "$w" exhibit_list "$@" ;;
-  digest)        w="$1"; shift; exec python3 "$SRV/deliverables.py" "$w" digest "$@" ;;
+  ingest)        exec "$PY" "$SRV/ingest.py" "$@" ;;
+  chronology)    exec "$PY" "$SRV/chronology.py" "$@" ;;
+  organize)      exec "$PY" "$SRV/organize.py" "$@" ;;
+  cluster)       exec "$PY" "$SRV/cluster.py" "$@" ;;
+  ingest_status) w="$1"; shift; exec "$PY" "$SRV/ingest.py" --work "$w" --status "$@" ;;
+  savings)       exec "$PY" "$SRV/savings.py" "$@" ;;
+  summarize)     exec "$PY" "$SRV/summarize.py" "$@" ;;
+  query)         exec "$PY" "$SRV/query.py" "$@" ;;
+  exhibit_list)  w="$1"; shift; exec "$PY" "$SRV/deliverables.py" "$w" exhibit_list "$@" ;;
+  digest)        w="$1"; shift; exec "$PY" "$SRV/deliverables.py" "$w" digest "$@" ;;
   assemble)      exec "$HLP/assemble" "$@" ;;
   ""|-h|--help)
     grep -E '^#   dossier' "$0" | sed 's/^#   //'

@@ -88,7 +88,12 @@ WEBCAP = _pick("helpers/webcapture", "helpers/webcapture_win.py")
 EML = BASE / "parsers/eml.py"
 CHAT = BASE / "parsers/chat.py"
 SCHEMA = BASE / "schema.sql"
-IMG = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".heic", ".heif"}
+IMG = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".heic", ".heif", ".webp"}
+# Per-file OCR budget: normal is <1s, but a Vision call can wedge (or crawl under heavy
+# system load — the 4 Oct stall). Bound every OCR subprocess so a slow/stuck file is KILLED
+# and recorded, never silently awaited forever. PDFs get extra time per page.
+OCR_TIMEOUT = 90            # seconds, floor per file
+OCR_TIMEOUT_PER_PAGE = 15   # added per PDF page
 
 
 def run(cmd, **kw):
@@ -259,15 +264,18 @@ def _doc_text_win(f):
             "re-run ingest to index this file's content]")
 
 
-def own_ocr(f, work):
-    """Always OCR with OUR engine (don't trust inherited ocr/). --page-sep for sub-doc awareness."""
+def own_ocr(f, work, timeout=OCR_TIMEOUT):
+    """Always OCR with OUR engine (don't trust inherited ocr/). --page-sep for sub-doc awareness.
+    Bounded by `timeout`: a wedged/crawling OCR raises TimeoutExpired (caught per-file) instead of
+    hanging the whole ingest."""
     ext = f.suffix.lower()
     outdir = work / "ocr"; outdir.mkdir(parents=True, exist_ok=True)
     out = outdir / (f.stem + ".txt")
-    if out.exists():
-        return out
+    if out.exists() and out.stat().st_size > 0:
+        return out                      # reuse only a NON-EMPTY sidecar — a 0-byte leftover from a
+                                        # killed/timed-out run must not make a re-run skip the file
     if ext == ".pdf" or ext in IMG:
-        run(OCRBIN + [str(f), "-o", str(out), "--page-sep", "--quiet"])
+        run(OCRBIN + [str(f), "-o", str(out), "--page-sep", "--quiet"], timeout=timeout)
     elif ext in (".docx", ".doc", ".rtf"):
         if _WIN:
             out.write_text(_doc_text_win(f) or "", encoding="utf-8")
@@ -452,7 +460,7 @@ def main():
         proc += 1
         write_progress(work, done=proc)
         try:
-            t_file = time.perf_counter()
+            t_file = time.perf_counter(); aid = None
             sha = sha256(f)
             if sha in existing:
                 continue                      # already ingested in a prior run → true idempotency
@@ -526,13 +534,15 @@ def main():
                                       ev.get("granularity", "minute"), "unknown", ev["source"],
                                       "document-backed", flag=ev.get("flag"))
 
-            t0 = time.perf_counter(); tp = own_ocr(f, work); log_metric(db, f.name, "ocr", _ms(t0))
+            ocr_to = OCR_TIMEOUT + OCR_TIMEOUT_PER_PAGE * (pages or 0)
+            t0 = time.perf_counter(); tp = own_ocr(f, work, timeout=ocr_to); log_metric(db, f.name, "ocr", _ms(t0))
             content_events = 0
-            if tp and tp.exists():
+            if tp and tp.exists() and tp.stat().st_size > 0:
                 body = tp.read_text(errors="ignore")
                 c["chars"] += len(body)
                 db.execute("INSERT INTO doc_fts(body,artifact_id) VALUES(?,?)", (body, aid))
                 db.execute("UPDATE artifact SET ocr_path=? WHERE id=?", (str(tp), aid))
+                print(f"  [{proc}/{len(files)}] {f.name[:46]}  {len(body)}b", file=sys.stderr)
                 if a.summarize:      # opt-in on-device gist (Apple FM); reduction only
                     summ.store(db, aid, summ.run_summary(str(tp)))
                 locale = extract.infer_locale(body)
@@ -540,7 +550,7 @@ def main():
                 # authoritative, zone-honest span events; NSDataDetector would misread the
                 # per-message locale as US MDY and flood the table one date per message)
                 if not is_chat:
-                    t0 = time.perf_counter(); r = run(DATEDETECT + [str(tp)]); log_metric(db, f.name, "datedetect", _ms(t0))
+                    t0 = time.perf_counter(); r = run(DATEDETECT + [str(tp)], timeout=60); log_metric(db, f.name, "datedetect", _ms(t0))
                     if r.returncode == 0 and r.stdout.strip():
                         for ev in json.loads(r.stdout):
                             add_event(aid, ev["kind"], ev["value_raw"], ev.get("value_utc"),
@@ -568,7 +578,14 @@ def main():
                 # R1: cheap-trigger, page-granular force-Vision (bypass text layer) for
                 # form/DocuSign/sparse docs whose text layer scrambled label↔value adjacency.
                 cpp = (len(body) / pages) if pages else 9999
-                if (doc_ff == 0 and ds["envelope_ids"]) or (pages and pages >= 2 and content_events == 0) or cpp < 200:
+                # R1 re-OCR targets forms/scans whose text layer scrambled label↔value adjacency.
+                # Gate the sparse trigger OFF for a plain image (slide/photo/diagram) that shows no
+                # form or DocuSign signal — re-OCRing it just doubles Vision cost for nothing. A legal
+                # scan keeps its form-field labels (FORM_LABELS) and still re-OCRs; PDFs are unaffected.
+                is_image = (kind == "image") or (f.suffix.lower() in IMG)
+                has_form_signal = bool(ds["envelope_ids"]) or any(lb in body.lower() for lb in FORM_LABELS)
+                sparse_trigger = cpp < 200 and not (is_image and not has_form_signal)
+                if (doc_ff == 0 and ds["envelope_ids"]) or (pages and pages >= 2 and content_events == 0) or sparse_trigger:
                     pm = r1_pages(body)
                     if ds["envelope_ids"]:
                         targets = [n for n, t in pm.items()
@@ -578,9 +595,15 @@ def main():
                         targets = sorted(pm) or [1]
                     combined = ""
                     t0 = time.perf_counter()
-                    for n in sorted(set(targets))[:6]:          # cap pages → bounded cost
-                        rr = run(OCRBIN + [str(f), "--force-vision", "--pages", str(n), "--quiet"])
-                        combined += "\n" + rr.stdout
+                    try:
+                        for n in sorted(set(targets))[:6]:          # cap pages → bounded cost
+                            rr = run(OCRBIN + [str(f), "--force-vision", "--pages", str(n), "--quiet"],
+                                     timeout=OCR_TIMEOUT)
+                            combined += "\n" + rr.stdout
+                    except subprocess.TimeoutExpired:
+                        # R1 is enrichment; a timeout here must NOT discard the good band-1 OCR already indexed
+                        db.execute("INSERT INTO gap(artifact_id,gap_type,detail,remediation) VALUES(?,?,?,?)",
+                                   (aid, "r1-timeout", "force-vision re-OCR exceeded timeout", "inspect file"))
                     log_metric(db, f.name, "R1", _ms(t0))
                     loc2 = extract.infer_locale(combined) or locale
                     rec = 0
@@ -597,16 +620,36 @@ def main():
                         db.execute("INSERT INTO gap(artifact_id,gap_type,detail,remediation) VALUES(?,?,?,?)",
                                    (aid, "sparse-ocr", f"{pages}pp, R1 found no typed dates",
                                     "R4a human-assist of key page"))
+            else:
+                # OCR produced no sidecar/text — RECORD it, never silently skip (this is how the
+                # 9 WebP slides vanished without a trace before .webp was added to IMG).
+                db.execute("INSERT INTO gap(artifact_id,gap_type,detail,remediation) VALUES(?,?,?,?)",
+                           (aid, "no-text", f"OCR produced no text (kind={kind}, ext={f.suffix.lower()})",
+                            "inspect file or add format support"))
+                c["notext"] = c.get("notext", 0) + 1
+                print(f"  [{proc}/{len(files)}] {f.name[:46]}  NO TEXT ({kind})", file=sys.stderr)
             log_metric(db, f.name, "file-total", _ms(t_file))
             db.commit()
         except Exception as e:
-            print(f"  ! {f.name[:48]}: {e}", file=sys.stderr)
+            msg = f"{type(e).__name__}: {e}"
+            print(f"  [{proc}/{len(files)}] ! {f.name[:46]}: {msg[:70]}", file=sys.stderr)
+            c["failed"] = c.get("failed", 0) + 1
+            if aid:
+                try:
+                    db.execute("INSERT INTO gap(artifact_id,gap_type,detail,remediation) VALUES(?,?,?,?)",
+                               (aid, "ocr-error", msg[:150], "re-ingest or inspect the file"))
+                    db.commit()
+                except Exception:
+                    pass
     db.commit()
 
     # DB-derived summary: correct after any number of resumed runs (this-run
     # counters would under-report a corpus finished across several passes).
     summary = summarize(db)
     print(summary)
+    if c.get("failed") or c.get("notext"):
+        print(f"  ⚠ {c.get('failed', 0)} errored, {c.get('notext', 0)} produced no text "
+              f"— recorded in the gap table (gap_type in 'ocr-error','no-text','r1-timeout')")
     try:
         (_state_dir(work) / "summary.txt").write_text(summary, encoding="utf-8")
     except Exception:
